@@ -46,6 +46,13 @@ resource "aws_vpc" "this" {
   tags = local.tags
 }
 
+# CloudFront VPC origins require an internet gateway on the VPC.
+resource "aws_internet_gateway" "this" {
+  vpc_id = aws_vpc.this.id
+
+  tags = local.tags
+}
+
 resource "aws_subnet" "this" {
   count = 2
 
