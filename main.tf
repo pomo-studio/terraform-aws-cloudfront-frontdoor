@@ -1,8 +1,40 @@
 locals {
-  declared_defaults = [for name, deployment in var.deployments : name if deployment.is_default]
-  single_deployment = length(var.deployments) == 1 ? keys(var.deployments)[0] : null
-  default_name      = length(local.declared_defaults) > 0 ? local.declared_defaults[0] : local.single_deployment
-  ordered_names     = [for name in sort(keys(var.deployments)) : name if name != local.default_name]
+  deployment_names = sort(keys(var.deployments))
+  default_name = (
+    var.default_deployment != null
+    ? var.default_deployment
+    : (length(local.deployment_names) > 0 ? local.deployment_names[0] : null)
+  )
+}
+
+resource "aws_cloudfront_cache_policy" "deployment" {
+  count = var.deployment_header != null ? 1 : 0
+
+  name        = "${var.name}-deployment"
+  min_ttl     = 0
+  default_ttl = 86400
+  max_ttl     = 31536000
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    cookies_config {
+      cookie_behavior = "none"
+    }
+
+    headers_config {
+      header_behavior = "whitelist"
+
+      headers {
+        items = [var.deployment_header]
+      }
+    }
+
+    query_strings_config {
+      query_string_behavior = "none"
+    }
+
+    enable_accept_encoding_brotli = true
+    enable_accept_encoding_gzip   = true
+  }
 }
 
 resource "aws_cloudfront_distribution" "this" {
@@ -35,24 +67,17 @@ resource "aws_cloudfront_distribution" "this" {
     viewer_protocol_policy   = "redirect-to-https"
     allowed_methods          = var.allowed_methods
     cached_methods           = ["GET", "HEAD"]
-    cache_policy_id          = var.cache_policy_id
+    cache_policy_id          = var.deployment_header != null ? aws_cloudfront_cache_policy.deployment[0].id : var.cache_policy_id
     origin_request_policy_id = var.origin_request_policy_id
     compress                 = true
-  }
 
-  dynamic "ordered_cache_behavior" {
-    for_each = local.ordered_names
+    dynamic "function_association" {
+      for_each = var.function_associations
 
-    content {
-      path_pattern     = var.deployments[ordered_cache_behavior.value].path_pattern
-      target_origin_id = ordered_cache_behavior.value
-
-      viewer_protocol_policy   = "redirect-to-https"
-      allowed_methods          = var.allowed_methods
-      cached_methods           = ["GET", "HEAD"]
-      cache_policy_id          = var.cache_policy_id
-      origin_request_policy_id = var.origin_request_policy_id
-      compress                 = true
+      content {
+        event_type   = function_association.value.event_type
+        function_arn = function_association.value.function_arn
+      }
     }
   }
 
@@ -83,13 +108,13 @@ resource "aws_cloudfront_distribution" "this" {
 
   lifecycle {
     precondition {
-      condition     = local.default_name != null
-      error_message = "Exactly one deployment must set is_default = true, or deployments must hold a single entry."
+      condition     = length(var.deployments) > 0
+      error_message = "At least one deployment is required."
     }
 
     precondition {
-      condition     = length(local.declared_defaults) <= 1
-      error_message = "Only one deployment may set is_default = true."
+      condition     = local.default_name != null && contains(keys(var.deployments), local.default_name)
+      error_message = "default_deployment must name a deployment, or be left null with a single deployment."
     }
 
     precondition {

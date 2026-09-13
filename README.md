@@ -9,9 +9,9 @@ The public front door for the Internet Ingress blueprint: a CloudFront distribut
 
 ## When to use it
 
-Reach for this module when you have private origins, from [`pomo-studio/cloudfront-vpc-origin/aws`](https://registry.terraform.io/modules/pomo-studio/cloudfront-vpc-origin/aws), and you want CloudFront to own the public edge: aliases, certificate, WAF, access logging, cache and origin request policy, and one behaviour per deployment.
+Reach for this module when you have private origins, from [`pomo-studio/cloudfront-vpc-origin/aws`](https://registry.terraform.io/modules/pomo-studio/cloudfront-vpc-origin/aws), and you want CloudFront to own the public edge: aliases, certificate, WAF, access logging, cache and origin request policy, one origin per deployment, and the function associations that let the edge router switch between them.
 
-Use a different tool when you only need the private connection (that is `cloudfront-vpc-origin`), or when you need per-request routing between deployments (that is [`pomo-studio/cloudfront-edge-router/aws`](https://registry.terraform.io/modules/pomo-studio/cloudfront-edge-router/aws)).
+Use a different tool when you only need the private connection (that is `cloudfront-vpc-origin`), or when you need the per-request selection logic itself (that is [`pomo-studio/cloudfront-edge-router/aws`](https://registry.terraform.io/modules/pomo-studio/cloudfront-edge-router/aws), which this module pairs with).
 
 ## Quickstart
 
@@ -29,14 +29,17 @@ module "frontdoor" {
     blue = {
       vpc_origin_id = module.origin_blue.id
       domain_name   = aws_lb.orders_blue.dns_name
-      is_default    = true
     }
     green = {
       vpc_origin_id = module.origin_green.id
       domain_name   = aws_lb.orders_green.dns_name
-      path_pattern  = "/green/*"
     }
   }
+
+  default_deployment = "blue"
+  deployment_header  = "x-postmodern-deployment"
+
+  function_associations = module.edge_router.function_associations
 
   enable_logging = true
   logging_bucket = aws_s3_bucket.logs.bucket
@@ -52,21 +55,23 @@ module "frontdoor" {
 | CloudFront distribution | 1 |
 | Origin (VPC origin) | one per deployment |
 | Default cache behaviour | 1 |
-| Ordered cache behaviour | one per non-default deployment |
+| Deployment-aware cache policy | 0-1 |
 | Viewer certificate | 1 |
 | Access log configuration | 0-1 |
 
 ## Design decisions
 
-- **One origin per deployment.** Each colour is its own origin and its own behaviour, so the deployment lives in the path and the cache key; blue and green never share a cached object.
+- **One origin per deployment.** Each colour is its own origin. A CloudFront Function selects between them per request, so the switch is a configuration change rather than an apply.
+- **The cache key carries the deployment.** Selecting an origin does not change the cache key, so when `deployment_header` is set the module creates a cache policy that keys on the header the edge router stamps. Without it, blue and green can serve each other's cached objects.
+- **CloudFront Functions, not Lambda@Edge.** VPC origins do not support Lambda@Edge origin request or response triggers, so origin selection runs in a CloudFront Function (JavaScript runtime 2.0, `selectRequestOriginById`).
 - **The origin domain is supplied, not discovered.** CloudFront asks for the origin DNS name alongside the VPC origin id, so each deployment passes the load balancer name it already knows.
 - **VPC origins drop the `Host` header.** VPC origins reject a forwarded `Host`, so the default origin request policy is `AllViewerExceptHostHeader` rather than `AllViewer`.
 - **The caller supplies the certificate and any WAF.** The module wires them in when given, rather than creating DNS or a web ACL it does not own.
-- **Rollout state is not a distribution attribute.** Active colour and weight live in Parameter Store and are read at the edge by `cloudfront-edge-router`, so promoting a deployment is not a `terraform apply`.
+- **Rollout state is not a distribution attribute.** Active colour and weight live in Parameter Store and reach the edge through the router, so promoting a deployment is not a `terraform apply`.
 
 ## Examples
 
-- [Basic](examples/basic/): a default deployment plus a second colour served on a path.
+- [Basic](examples/basic/): two private origins behind one distribution.
 
 ## Reference
 
@@ -95,6 +100,7 @@ No modules.
 
 | Name | Type |
 |------|------|
+| [aws_cloudfront_cache_policy.deployment](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_cache_policy) | resource |
 | [aws_cloudfront_distribution.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_distribution) | resource |
 
 ## Inputs
@@ -105,10 +111,13 @@ No modules.
 | <a name="input_aliases"></a> [aliases](#input\_aliases) | Alternate domain names (CNAMEs) for the distribution | `list(string)` | `[]` | no |
 | <a name="input_allowed_methods"></a> [allowed\_methods](#input\_allowed\_methods) | HTTP methods the distribution forwards to the origin | `list(string)` | <pre>[<br/>  "GET",<br/>  "HEAD",<br/>  "OPTIONS"<br/>]</pre> | no |
 | <a name="input_cache_policy_id"></a> [cache\_policy\_id](#input\_cache\_policy\_id) | Cache policy for the behaviours. Defaults to the managed CachingOptimized policy. | `string` | `"658327ea-f89d-4fab-a63d-7e88639e58f6"` | no |
+| <a name="input_default_deployment"></a> [default\_deployment](#input\_default\_deployment) | Deployment the distribution targets when the edge router does not override it. Defaults to the first deployment in sort order. | `string` | `null` | no |
 | <a name="input_default_root_object"></a> [default\_root\_object](#input\_default\_root\_object) | Object CloudFront returns for requests to the root URL | `string` | `null` | no |
-| <a name="input_deployments"></a> [deployments](#input\_deployments) | Deployment colours keyed by name. Each points at a VPC origin; exactly one must set is\_default, or the map must hold a single entry. | <pre>map(object({<br/>    vpc_origin_id = string<br/>    domain_name   = string<br/>    path_pattern  = optional(string, "/*")<br/>    is_default    = optional(bool, false)<br/>  }))</pre> | n/a | yes |
+| <a name="input_deployment_header"></a> [deployment\_header](#input\_deployment\_header) | Request header the edge router sets to mark the chosen deployment. When set, the distribution creates a cache policy that keys on it so deployments do not share cached objects. | `string` | `null` | no |
+| <a name="input_deployments"></a> [deployments](#input\_deployments) | Deployments keyed by name. Each points at a VPC origin. One deployment is the default target; the edge router can override it per request. | <pre>map(object({<br/>    vpc_origin_id = string<br/>    domain_name   = string<br/>  }))</pre> | n/a | yes |
 | <a name="input_enable_logging"></a> [enable\_logging](#input\_enable\_logging) | Write access logs to logging\_bucket | `bool` | `true` | no |
 | <a name="input_enable_waf"></a> [enable\_waf](#input\_enable\_waf) | Associate a web ACL with the distribution | `bool` | `false` | no |
+| <a name="input_function_associations"></a> [function\_associations](#input\_function\_associations) | CloudFront Function associations for the default cache behaviour, such as the edge router on viewer-request and viewer-response. | <pre>list(object({<br/>    event_type   = string<br/>    function_arn = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_http_version"></a> [http\_version](#input\_http\_version) | Maximum HTTP version CloudFront serves | `string` | `"http2and3"` | no |
 | <a name="input_logging_bucket"></a> [logging\_bucket](#input\_logging\_bucket) | S3 bucket for standard access logs. Required when enable\_logging is true. | `string` | `null` | no |
 | <a name="input_logging_prefix"></a> [logging\_prefix](#input\_logging\_prefix) | Key prefix for access log objects | `string` | `null` | no |

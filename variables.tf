@@ -4,13 +4,32 @@ variable "name" {
 }
 
 variable "deployments" {
-  description = "Deployment colours keyed by name. Each points at a VPC origin; exactly one must set is_default, or the map must hold a single entry."
+  description = "Deployments keyed by name. Each points at a VPC origin. One deployment is the default target; the edge router can override it per request."
   type = map(object({
     vpc_origin_id = string
     domain_name   = string
-    path_pattern  = optional(string, "/*")
-    is_default    = optional(bool, false)
   }))
+}
+
+variable "default_deployment" {
+  description = "Deployment the distribution targets when the edge router does not override it. Defaults to the first deployment in sort order."
+  type        = string
+  default     = null
+}
+
+variable "function_associations" {
+  description = "CloudFront Function associations for the default cache behaviour, such as the edge router on viewer-request and viewer-response."
+  type = list(object({
+    event_type   = string
+    function_arn = string
+  }))
+  default = []
+}
+
+variable "deployment_header" {
+  description = "Request header the edge router sets to mark the chosen deployment. When set, the distribution creates a cache policy that keys on it so deployments do not share cached objects."
+  type        = string
+  default     = null
 }
 
 variable "aliases" {

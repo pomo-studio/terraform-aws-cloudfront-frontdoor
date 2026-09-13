@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.5.0"
+  required_version = ">= 1.9.0"
 
   required_providers {
     aws = {
@@ -21,14 +21,14 @@ module "frontdoor" {
     blue = {
       vpc_origin_id = "E2ABCDEFGHIJKL"
       domain_name   = "orders-blue.internal.example.com"
-      is_default    = true
     }
     green = {
       vpc_origin_id = "E2MNOPQRSTUVWXY"
       domain_name   = "orders-green.internal.example.com"
-      path_pattern  = "/green/*"
     }
   }
+
+  default_deployment = "blue"
 
   enable_logging = true
   logging_bucket = "example-cloudfront-logs"
