@@ -8,5 +8,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Scaffolded the `cloudfront-frontdoor` component interface: distribution,
-  behaviours, certificate, optional WAF, and logging.
+- The `cloudfront-frontdoor` distribution: one VPC origin and behaviour per
+  deployment, managed cache and origin request policies, viewer certificate,
+  optional WAF association, and optional access logging.

@@ -18,8 +18,16 @@ module "frontdoor" {
   acm_certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
 
   deployments = {
-    blue  = { vpc_origin_id = "E2ABCDEFGHIJKL" }
-    green = { vpc_origin_id = "E2MNOPQRSTUVWXY" }
+    blue = {
+      vpc_origin_id = "E2ABCDEFGHIJKL"
+      domain_name   = "orders-blue.internal.example.com"
+      is_default    = true
+    }
+    green = {
+      vpc_origin_id = "E2MNOPQRSTUVWXY"
+      domain_name   = "orders-green.internal.example.com"
+      path_pattern  = "/green/*"
+    }
   }
 
   enable_logging = true
