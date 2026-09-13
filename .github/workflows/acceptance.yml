@@ -1,0 +1,30 @@
+name: Live acceptance
+
+# Dispatch a real apply and destroy of examples/live in Terraform Cloud. The
+# apply runs in the workspace, not in GitHub, and never runs automatically.
+# Requires a TF_API_TOKEN secret with access to the workspace, and AWS
+# credentials configured on the workspace itself.
+
+on:
+  workflow_dispatch:
+    inputs:
+      workspace:
+        description: Terraform Cloud workspace
+        type: string
+        default: cloudfront-frontdoor-acceptance
+      skip_destroy:
+        description: Leave resources in place for debugging
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    uses: pomo-studio/.github/.github/workflows/module-acceptance.yml@main
+    with:
+      workspace: ${{ inputs.workspace }}
+      skip_destroy: ${{ inputs.skip_destroy }}
+    secrets:
+      TF_API_TOKEN: ${{ secrets.TF_API_TOKEN }}
